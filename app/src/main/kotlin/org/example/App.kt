@@ -24,9 +24,7 @@ enum class MetaCommandResult {
     META_COMMAND_UNRECOGNIZED,
 }
 
-class Table(var numRows: Int) {
-    val pages = arrayOfNulls<ByteBuffer>(TABLE_MAX_PAGES).toMutableList()
-}
+class Table(var numRows: Int, val pager: Pager)
 
 enum class StatementType {
     INSERT,
@@ -35,9 +33,8 @@ enum class StatementType {
 
 data class Row(val id: Int, val name: String, val email: String)
 
-fun serializeRow(row: Row, pageNum: Int, byteOffset: Int, table: Table) {
+fun serializeRow(row: Row, page: ByteBuffer, byteOffset: Int, table: Table) {
     // positionで位置を指定したあとは，相対putで埋めていく
-    val page = table.pages[pageNum]!!
     page.position(byteOffset)
     page.putInt(row.id)
     // 文字コード書いていない場合は，Charsets.UTF_8が指定される
@@ -47,8 +44,7 @@ fun serializeRow(row: Row, pageNum: Int, byteOffset: Int, table: Table) {
     page.put(emailBytes)
 }
 
-fun deserializeRow(pageNum: Int, byteOffset: Int, table: Table): Row {
-    val page = table.pages[pageNum]!!
+fun deserializeRow(page: ByteBuffer, byteOffset: Int, table: Table): Row {
     page.position(byteOffset)
     val id = page.getInt()
     val userNameBytes = ByteArray(COLUMN_USERNAME_SIZE)
@@ -61,16 +57,13 @@ fun deserializeRow(pageNum: Int, byteOffset: Int, table: Table): Row {
     return Row(id, name, email)
 }
 
-fun rowSlot(table: Table, rowNum: Int): Pair<Int, Int> {
+fun rowSlot(table: Table, rowNum: Int): Pair<ByteBuffer, Int> {
     val pageNum = rowNum / ROWS_PER_PAGE
-    val page = table.pages[pageNum]
-    // まだ確保できていなかったら新しいpageを確保
-    if (page == null) {
-        table.pages[pageNum] = ByteBuffer.allocate(PAGE_SIZE)
-    }
+    // rowNumが何ページ目にあるか
+    val page = getPage(table.pager, pageNum)
     val rowOffset = rowNum % ROWS_PER_PAGE
     val byteOffset = rowOffset * ROW_SIZE
-    return Pair(pageNum, byteOffset)
+    return Pair(page, byteOffset)
 }
 
 sealed interface Statement {
@@ -92,8 +85,9 @@ enum class ExecuteResult {
     EXECUTE_TABLE_FAILURE,
 }
 
-fun doMetaCommand(command: String): MetaCommandResult {
+fun doMetaCommand(command: String, table: Table): MetaCommandResult {
     if (command == ".exit") {
+        dbClose(table)
         exitProcess(0)
     } else {
         return MetaCommandResult.META_COMMAND_UNRECOGNIZED
@@ -125,16 +119,16 @@ fun executeInsert(row: Row, table: Table): ExecuteResult {
     if (table.numRows >= TABLE_MAX_ROWS) {
         return ExecuteResult.EXECUTE_TABLE_FAILURE
     }
-    val (pageNum, byteOffset) = rowSlot(table, table.numRows)
-    serializeRow(row, pageNum, byteOffset, table)
+    val (page, byteOffset) = rowSlot(table, table.numRows)
+    serializeRow(row, page, byteOffset, table)
     table.numRows += 1
     return ExecuteResult.EXECUTE_SUCCESS
 }
 
 fun executeSelect(table: Table): ExecuteResult {
     for (i in 0..<table.numRows) {
-        val (pageNum, byteOffset) = rowSlot(table, i)
-        val row = deserializeRow(pageNum, byteOffset, table)
+        val (page, byteOffset) = rowSlot(table, i)
+        val row = deserializeRow(page, byteOffset, table)
         println("id: ${row.id}, name: ${row.name}, email: ${row.email}")
     }
     return ExecuteResult.EXECUTE_SUCCESS
@@ -154,7 +148,7 @@ fun executeStatement(statement: Statement, table: Table): ExecuteResult {
 
 
 fun main() {
-    val table = Table(0)
+    val table = dbOpen("test.db")
 
     while (true) {
         print("db > ")
@@ -162,7 +156,7 @@ fun main() {
 
         // meta command
         if (command[0] == '.') {
-            when (doMetaCommand(command)) {
+            when (doMetaCommand(command, table)) {
                 MetaCommandResult.META_COMMAND_SUCCESS -> {
                     continue;
                 }
