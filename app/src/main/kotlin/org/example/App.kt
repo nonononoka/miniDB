@@ -33,7 +33,7 @@ enum class StatementType {
 
 data class Row(val id: Int, val name: String, val email: String)
 
-fun serializeRow(row: Row, page: ByteBuffer, byteOffset: Int, table: Table) {
+fun serializeRow(row: Row, page: ByteBuffer, byteOffset: Int) {
     // positionで位置を指定したあとは，相対putで埋めていく
     page.position(byteOffset)
     page.putInt(row.id)
@@ -44,7 +44,7 @@ fun serializeRow(row: Row, page: ByteBuffer, byteOffset: Int, table: Table) {
     page.put(emailBytes)
 }
 
-fun deserializeRow(page: ByteBuffer, byteOffset: Int, table: Table): Row {
+fun deserializeRow(page: ByteBuffer, byteOffset: Int): Row {
     page.position(byteOffset)
     val id = page.getInt()
     val userNameBytes = ByteArray(COLUMN_USERNAME_SIZE)
@@ -57,11 +57,11 @@ fun deserializeRow(page: ByteBuffer, byteOffset: Int, table: Table): Row {
     return Row(id, name, email)
 }
 
-fun rowSlot(table: Table, rowNum: Int): Pair<ByteBuffer, Int> {
-    val pageNum = rowNum / ROWS_PER_PAGE
+fun cursorValue(cursor: Cursor): Pair<ByteBuffer, Int> {
+    val pageNum = cursor.rowNum / ROWS_PER_PAGE
     // rowNumが何ページ目にあるか
-    val page = getPage(table.pager, pageNum)
-    val rowOffset = rowNum % ROWS_PER_PAGE
+    val page = getPage(cursor.table.pager, pageNum)
+    val rowOffset = cursor.rowNum % ROWS_PER_PAGE
     val byteOffset = rowOffset * ROW_SIZE
     return Pair(page, byteOffset)
 }
@@ -119,17 +119,20 @@ fun executeInsert(row: Row, table: Table): ExecuteResult {
     if (table.numRows >= TABLE_MAX_ROWS) {
         return ExecuteResult.EXECUTE_TABLE_FAILURE
     }
-    val (page, byteOffset) = rowSlot(table, table.numRows)
-    serializeRow(row, page, byteOffset, table)
+    val cursor = tableEnd(table)
+    val (page, byteOffset) = cursor.value()
+    serializeRow(row, page, byteOffset)
     table.numRows += 1
     return ExecuteResult.EXECUTE_SUCCESS
 }
 
 fun executeSelect(table: Table): ExecuteResult {
-    for (i in 0..<table.numRows) {
-        val (page, byteOffset) = rowSlot(table, i)
-        val row = deserializeRow(page, byteOffset, table)
+    val cursor = tableStart(table)
+    while (!cursor.endOfTable) {
+        val (page, byteOffset) = cursor.value()
+        val row = deserializeRow(page, byteOffset)
         println("id: ${row.id}, name: ${row.name}, email: ${row.email}")
+        cursor.advance()
     }
     return ExecuteResult.EXECUTE_SUCCESS
 }
