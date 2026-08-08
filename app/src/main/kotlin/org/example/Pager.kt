@@ -4,8 +4,10 @@ import java.nio.ByteBuffer
 import java.io.File
 import java.nio.channels.FileChannel
 import java.nio.file.StandardOpenOption.*
+import kotlin.system.exitProcess
 
-class Pager(val fileChannel: FileChannel, var fileLength: Int) {
+class Pager(val fileChannel: FileChannel, var fileLength: Int, var numPages: Int) {
+    // page1つ1つが，btreeのnodeに相当する
     val pages = arrayOfNulls<ByteBuffer>(TABLE_MAX_PAGES)
 }
 
@@ -13,41 +15,38 @@ fun dbOpen(filename: String): Table {
     val file = File(filename)
     // 最初にchannelを開いてあとはそれを使い回す
     val channel = FileChannel.open(file.toPath(), CREATE, READ, WRITE)
-    val pager = Pager(channel, file.length().toInt())
-    // 今，ファイルにあるrowの数
-    val numRows = pager.fileLength / ROW_SIZE
-    val table = Table(numRows, pager)
+    val pager = Pager(channel, file.length().toInt(), file.length().toInt() / PAGE_SIZE)
+
+    if (file.length().toInt() % PAGE_SIZE != 0) {
+        println("Db file is not a whole number of pages. Corrupt file.")
+        exitProcess(1)
+    }
+
+    val table = Table(pager, 0)
+    if (pager.numPages == 0) {
+        // New database file．Initialize page 0 as leaf node.
+        val rootNode = getPage(pager, 0)
+        initializeLeafNode(rootNode)
+    }
     return table
 }
 
 fun dbClose(table: Table) {
     val pager = table.pager
     // 全部で何ページあるか
-    val numFullPages = table.numRows / ROWS_PER_PAGE
-
-    for (i in 0 until numFullPages) {
+    for (i in 0 until pager.numPages) {
         if (pager.pages[i] == null) {
             continue
         }
         // pageをファイルに書き戻す
-        pagerFlush(table.pager, i, PAGE_SIZE)
+        pagerFlush(table.pager, i)
         pager.pages[i] = null
-    }
-
-    // 最後の，1ページ分に満たない中途半端なページも書き込む
-    val numAdditionalRow = table.numRows % ROWS_PER_PAGE
-    if(numAdditionalRow != 0){
-        val pageNum = numFullPages
-        if (pager.pages[pageNum] != null){
-            pagerFlush(pager, numFullPages, numAdditionalRow * ROW_SIZE)
-            pager.pages[numFullPages] = null
-        }
     }
 
     pager.fileChannel.close()
 }
 
-fun pagerFlush(pager: Pager, pageNum: Int, size: Int) {
+fun pagerFlush(pager: Pager, pageNum: Int) {
     if (pager.pages[pageNum] == null) {
         println("Tried to flush null page")
     }
@@ -55,16 +54,20 @@ fun pagerFlush(pager: Pager, pageNum: Int, size: Int) {
     // pager.pages[pageNum]をpager.fileに書き込む
     val page = pager.pages[pageNum]!!
     page.position(0)
-    page.limit(size)
     val offset = (pageNum * PAGE_SIZE).toLong()
+    // page（ByteBuffer）の中身を、ファイルの先頭から offset バイト目の位置に書き込む
     pager.fileChannel.write(page, offset)
 }
 
 // 最初に全部loadしてくるわけではなくて必要になったときにメモリにloadしてくる
 // 指定された番号のページを返す，もしメモリに無ければファイルから探し出してメモリに載せる
+// ここはpageNum番目のpageを特定のByteBufferに読み込んでいるだけなので，
+// treeにしようが関係ない
+// pageNum番目のtreenodeを返しているみたいなこと
 fun getPage(pager: Pager, pageNum: Int): ByteBuffer {
     if (pageNum > TABLE_MAX_PAGES) {
         println("Tried to fetch page number out of bounds. $pageNum > $TABLE_MAX_PAGES")
+        exitProcess(1)
     }
 
     // cache miss. Allocate memory and load from file
@@ -85,6 +88,10 @@ fun getPage(pager: Pager, pageNum: Int): ByteBuffer {
         }
 
         pager.pages[pageNum] = page
+
+        if (pageNum >= pager.numPages) {
+            pager.numPages = pageNum + 1
+        }
     }
     return pager.pages[pageNum]!!
 }

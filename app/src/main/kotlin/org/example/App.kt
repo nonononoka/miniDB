@@ -24,7 +24,7 @@ enum class MetaCommandResult {
     META_COMMAND_UNRECOGNIZED,
 }
 
-class Table(var numRows: Int, val pager: Pager)
+class Table(val pager: Pager, var rootPageNum: Int)
 
 enum class StatementType {
     INSERT,
@@ -33,9 +33,8 @@ enum class StatementType {
 
 data class Row(val id: Int, val name: String, val email: String)
 
-fun serializeRow(row: Row, page: ByteBuffer, byteOffset: Int) {
+fun serializeRow(row: Row, page: ByteBuffer) {
     // positionで位置を指定したあとは，相対putで埋めていく
-    page.position(byteOffset)
     page.putInt(row.id)
     // 文字コード書いていない場合は，Charsets.UTF_8が指定される
     val userNameBytes = row.name.toByteArray().copyOf(COLUMN_USERNAME_SIZE)
@@ -44,8 +43,7 @@ fun serializeRow(row: Row, page: ByteBuffer, byteOffset: Int) {
     page.put(emailBytes)
 }
 
-fun deserializeRow(page: ByteBuffer, byteOffset: Int): Row {
-    page.position(byteOffset)
+fun deserializeRow(page: ByteBuffer): Row {
     val id = page.getInt()
     val userNameBytes = ByteArray(COLUMN_USERNAME_SIZE)
     page.get(userNameBytes)
@@ -57,13 +55,10 @@ fun deserializeRow(page: ByteBuffer, byteOffset: Int): Row {
     return Row(id, name, email)
 }
 
-fun cursorValue(cursor: Cursor): Pair<ByteBuffer, Int> {
-    val pageNum = cursor.rowNum / ROWS_PER_PAGE
-    // rowNumが何ページ目にあるか
+fun cursorValue(cursor: Cursor): ByteBuffer {
+    val pageNum = cursor.pageNum
     val page = getPage(cursor.table.pager, pageNum)
-    val rowOffset = cursor.rowNum % ROWS_PER_PAGE
-    val byteOffset = rowOffset * ROW_SIZE
-    return Pair(page, byteOffset)
+    return leafNodeValue(page, cursor.cellNum)
 }
 
 sealed interface Statement {
@@ -89,6 +84,10 @@ fun doMetaCommand(command: String, table: Table): MetaCommandResult {
     if (command == ".exit") {
         dbClose(table)
         exitProcess(0)
+    } else if (command == ".constants") {
+        println("Constants:")
+        printConstants()
+        return MetaCommandResult.META_COMMAND_SUCCESS
     } else {
         return MetaCommandResult.META_COMMAND_UNRECOGNIZED
     }
@@ -116,24 +115,23 @@ fun prepareStatement(command: String): PrepareResult {
 }
 
 fun executeInsert(row: Row, table: Table): ExecuteResult {
-    if (table.numRows >= TABLE_MAX_ROWS) {
+    val node = getPage(table.pager, table.rootPageNum)
+    if (leafNodeNumCells(node).getInt() >= TABLE_MAX_ROWS) {
         return ExecuteResult.EXECUTE_TABLE_FAILURE
     }
     val cursor = tableEnd(table)
-    val (page, byteOffset) = cursor.value()
-    serializeRow(row, page, byteOffset)
-    table.numRows += 1
+    leafNodeInsert(cursor, row.id, row)
     return ExecuteResult.EXECUTE_SUCCESS
 }
 
 fun executeSelect(table: Table): ExecuteResult {
     val cursor = tableStart(table)
     while (!cursor.endOfTable) {
-        val (page, byteOffset) = cursor.value()
-        val row = deserializeRow(page, byteOffset)
+        val row = deserializeRow(cursorValue(cursor))
         println("id: ${row.id}, name: ${row.name}, email: ${row.email}")
         cursor.advance()
     }
+
     return ExecuteResult.EXECUTE_SUCCESS
 }
 
@@ -149,6 +147,14 @@ fun executeStatement(statement: Statement, table: Table): ExecuteResult {
     }
 }
 
+fun printConstants() {
+    println("ROW_SIZE: $ROW_SIZE")
+    println("COMMON_NODE_HEADER_SIZE: $COMMON_NODE_HEADER_SIZE")
+    println("LEAF_NODE_HEADER_SIZE: $LEAF_NODE_HEADER_SIZE")
+    println("LEAF_NODE_CELL_SIZE: $LEAF_NODE_CELL_SIZE")
+    println("LEAF_NODE_SPACE_FOR_CELLS: $LEAF_NODE_SPACE_FOR_CELLS")
+    println("LEAF_NODE_MAX_CELLS: $LEAF_NODE_MAX_CELLS")
+}
 
 fun main() {
     val table = dbOpen("test.db")
