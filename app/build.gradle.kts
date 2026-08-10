@@ -52,3 +52,28 @@ tasks.named<Test>("test") {
 tasks.named<JavaExec>("run") {
     standardInput = System.`in`
 }
+
+// DB ファイルを xxd で16進ダンプする。
+//   ./gradlew hexdump                        (既定: app/test.db 全体)
+//   ./gradlew hexdump -Pfile=other.db        (対象ファイルを変更)
+//   ./gradlew hexdump -Poffset=0 -Plength=64 (範囲を指定)
+tasks.register<Exec>("hexdump") {
+    group = "verification"
+    description = "xxd -g 1 で DB ファイルをダンプする"
+
+    val target = layout.projectDirectory.file(
+        (project.findProperty("file") as String?) ?: "test.db"
+    )
+
+    // 毎回実行する（出力はファイルではなくコンソールなのでキャッシュしない）
+    outputs.upToDateWhen { false }
+
+    commandLine(
+        buildList {
+            add("xxd")
+            add("-g"); add("1")
+            add(target.asFile.absolutePath)
+        }
+    )
+    standardOutput = System.out
+}

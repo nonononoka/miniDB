@@ -8,3 +8,5 @@ build
 .kotlin
 
 app/test.db
+
+.idea/
