@@ -65,6 +65,8 @@ fun pagerFlush(pager: Pager, pageNum: Int) {
 // treeにしようが関係ない
 // pageNum番目のtreenodeを返しているみたいなこと
 fun getPage(pager: Pager, pageNum: Int): ByteBuffer {
+    // pageNumは，0-index始まりのpage番号
+    // pager.numPagesは，
     if (pageNum > TABLE_MAX_PAGES) {
         println("Tried to fetch page number out of bounds. $pageNum > $TABLE_MAX_PAGES")
         exitProcess(1)
@@ -74,24 +76,19 @@ fun getPage(pager: Pager, pageNum: Int): ByteBuffer {
     if (pager.pages[pageNum] == null) {
         // そのページ用の空きメモリを作る
         val page = ByteBuffer.allocate(PAGE_SIZE)
-        // 今，ファイル内に何ページあるか
-        var numPages = pager.fileLength / PAGE_SIZE
-        if (pager.fileLength % PAGE_SIZE != 0) {
-            numPages += 1
-        }
 
-        // pageNum < numPagesなら，ファイルにデータがあるってことだから，読み込む
-        if (pageNum < numPages) {
+        // pageNum < numPagesなら，まだファイルに読み込んでいないデータが
+        // あって，その分のpageを要求しているってことだからそれを読み込めばいい
+        if (pageNum < pager.numPages) {
             // PAGE_SIZE分だけ，読み込む
             val offset = (pageNum * PAGE_SIZE).toLong()
             pager.fileChannel.read(page, offset)
+        } else {
+            // そうじゃない場合は，pageを増やすことになるから，numPagesを増やす
+            pager.numPages = pageNum + 1
         }
 
         pager.pages[pageNum] = page
-
-        if (pageNum >= pager.numPages) {
-            pager.numPages = pageNum + 1
-        }
     }
     return pager.pages[pageNum]!!
 }

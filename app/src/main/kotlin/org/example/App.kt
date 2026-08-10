@@ -78,6 +78,7 @@ sealed interface PrepareResult {
 enum class ExecuteResult {
     EXECUTE_SUCCESS,
     EXECUTE_TABLE_FAILURE,
+    EXECUTE_DUPLICATE_KEY
 }
 
 fun doMetaCommand(command: String, table: Table): MetaCommandResult {
@@ -116,10 +117,21 @@ fun prepareStatement(command: String): PrepareResult {
 
 fun executeInsert(row: Row, table: Table): ExecuteResult {
     val node = getPage(table.pager, table.rootPageNum)
-    if (leafNodeNumCells(node).getInt() >= TABLE_MAX_ROWS) {
+    val numCells = leafNodeNumCells(node).getInt()
+    if (numCells >= TABLE_MAX_ROWS) {
         return ExecuteResult.EXECUTE_TABLE_FAILURE
     }
-    val cursor = tableEnd(table)
+    val keyToInsert = row.id
+    val cursor = tableFind(table, keyToInsert)
+
+    // 一番後ろにくる場合があるので，そのときは，cursor.cellNum==numCellsになっている
+    // そのとき，nodekeyとかはまだ入っていないのでこの分岐が必要
+    if (cursor.cellNum < numCells) {
+        val keyAtIndex = leafNodeKey(node, cursor.cellNum).getInt()
+        if (keyAtIndex == keyToInsert) {
+            return ExecuteResult.EXECUTE_DUPLICATE_KEY
+        }
+    }
     leafNodeInsert(cursor, row.id, row)
     return ExecuteResult.EXECUTE_SUCCESS
 }
@@ -198,6 +210,10 @@ fun main() {
                     ExecuteResult.EXECUTE_TABLE_FAILURE -> {
                         println("Table failure")
                     }
+
+                    ExecuteResult.EXECUTE_DUPLICATE_KEY -> {
+                        println("Duplicate key")
+                    }
                 }
             }
 
@@ -209,6 +225,10 @@ fun main() {
 
                     ExecuteResult.EXECUTE_TABLE_FAILURE -> {
                         println("Table failure")
+                    }
+
+                    ExecuteResult.EXECUTE_DUPLICATE_KEY -> {
+                        println("Duplicate key: $res.statement")
                     }
                 }
             }

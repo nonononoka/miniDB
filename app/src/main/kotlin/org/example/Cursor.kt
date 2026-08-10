@@ -1,6 +1,7 @@
 package org.example
 
 import java.nio.ByteBuffer
+import kotlin.system.exitProcess
 
 // どのpageのどのcellかを表す
 class Cursor(val table: Table, var pageNum: Int, var cellNum: Int, var endOfTable: Boolean) {
@@ -33,8 +34,17 @@ fun tableStart(table: Table): Cursor {
     return cursor
 }
 
-fun tableEnd(table: Table): Cursor {
-    val rootNode = getPage(table.pager, table.rootPageNum)
-    val cursor = Cursor(table, table.rootPageNum, leafNodeNumCells(rootNode).getInt(), true)
-    return cursor
+// return the position of the given key
+// If the key is not present, return the position
+// where it should be inserted
+fun tableFind(table: Table, key: Int): Cursor {
+    val rootPageNum = table.rootPageNum
+    val rootNode = getPage(table.pager, rootPageNum)
+
+    if (getNodeType(rootNode) == TreeNodeType.NODE_LEAF) {
+        return leafNodeFind(table, rootPageNum, key)
+    } else {
+        println("Need to implement searching an internal node: ${getNodeType(rootNode)}")
+        exitProcess(1)
+    }
 }

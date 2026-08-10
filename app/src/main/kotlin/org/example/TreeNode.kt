@@ -1,13 +1,12 @@
 package org.example
 
-import com.google.common.collect.Table
 import java.nio.ByteBuffer
 import kotlin.system.exitProcess
 
 // それぞれのnodeが1ページに相当する
-enum class TreeNode {
+enum class TreeNodeType {
+    NODE_LEAF,
     NODE_INTERNAL,
-    NODE_LEAF
 }
 
 // Common Node Header Layout
@@ -52,6 +51,7 @@ fun leafNodeValue(byteBuffer: ByteBuffer, cellNum: Int): ByteBuffer {
 
 fun initializeLeafNode(byteBuffer: ByteBuffer) {
     // まだ1つもcellが入っていない
+    setNodeType(byteBuffer, TreeNodeType.NODE_LEAF)
     leafNodeNumCells(byteBuffer).putInt(0)
 }
 
@@ -64,8 +64,69 @@ fun leafNodeInsert(cursor: Cursor, key: Int, value: Row) {
         return
     }
 
+    // これは新しく足すのではなくて，すでにある位置にぶっこむ場合
+    // このとき，後ろのnodeを全部ずらす必要がある
+    if (cursor.cellNum < numCells) {
+        // cursor.cellNum番目から，numcells-1番目を全部LEAF_NODE_CELL_SIZEだけ
+        // 後ろにずらす
+        // 前からやっていくとデータ壊すので，後ろからやっていく
+        val tmp = ByteArray(LEAF_NODE_CELL_SIZE)
+        for (i in (numCells - 1) downTo cursor.cellNum) {
+            leafNodeCell(node, i).get(tmp)
+            leafNodeCell(node, i + 1).put(tmp)
+        }
+    }
+
     val newNumCell = leafNodeNumCells(node).getInt() + 1
     leafNodeNumCells(node).putInt(newNumCell)
     leafNodeKey(node, cursor.cellNum).putInt(key)
     serializeRow(value, leafNodeValue(node, cursor.cellNum))
+}
+
+// 該当pageの中に，指定されたkeyがあるかを探す
+// あったらそこを指すcursorを返して
+// なかったら入るはずのcursorを返す
+fun leafNodeFind(table: Table, pageNum: Int, key: Int): Cursor {
+    val node = getPage(table.pager, pageNum)
+    val numCells = leafNodeNumCells(node).getInt()
+    val cursor = Cursor(table, pageNum, 0, false)
+    var minIndex = 0
+    var onePastMaxIndex = numCells
+
+    while (onePastMaxIndex != minIndex) {
+        val index = (minIndex + onePastMaxIndex) / 2
+        // index番目のkeyをとってくる
+        val keyAtIndex = leafNodeKey(node, index).getInt()
+        if (key == keyAtIndex) {
+            cursor.cellNum = index
+            if (index == numCells - 1) {
+                cursor.endOfTable = true
+            }
+            return cursor
+        }
+        if (key < keyAtIndex) {
+            onePastMaxIndex = index
+        } else {
+            minIndex = index + 1
+        }
+    }
+
+    cursor.cellNum = minIndex
+    if (minIndex == numCells - 1) {
+        cursor.endOfTable = true
+    }
+    return cursor
+}
+
+fun getNodeType(node: ByteBuffer): TreeNodeType {
+    val value = node.get(NODE_TYPE_OFFSET)
+    return when (value) {
+        0.toByte() -> TreeNodeType.NODE_LEAF
+        1.toByte() -> TreeNodeType.NODE_INTERNAL
+        else -> throw IllegalArgumentException("不正なノードタイプです: $value")
+    }
+}
+
+fun setNodeType(node: ByteBuffer, nodeType: TreeNodeType) {
+    node.put(NODE_TYPE_OFFSET, nodeType.ordinal.toByte())
 }
