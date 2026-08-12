@@ -14,7 +14,8 @@ const val INTERNAL_NODE_HEADER_SIZE =
 // Internal Node Body Layout
 const val INTERNAL_NODE_KEY_SIZE = 4
 const val INTERNAL_NODE_CHILD_SIZE = 4
-const val INTERNAL_NODE_CELL_SIZE = INTERNAL_NODE_CHILD_SIZE + INTERNAL_NODE_RIGHT_CHILD_SIZE + INTERNAL_NODE_KEY_SIZE
+// 1つのcellは [child(4B) | key(4B)]
+const val INTERNAL_NODE_CELL_SIZE = INTERNAL_NODE_CHILD_SIZE + INTERNAL_NODE_KEY_SIZE
 
 // utility関数
 fun internalNodeNumKeys(byteBuffer: ByteBuffer): ByteBuffer {
@@ -45,7 +46,8 @@ fun internalNodeChild(byteBuffer: ByteBuffer, childNum: Int): ByteBuffer {
 }
 
 fun internalNodeKey(byteBuffer: ByteBuffer, keyNum: Int): ByteBuffer {
-    return internalNodeCell(byteBuffer, keyNum)
+    // keyはcellの中でchildの後ろに置かれている
+    return byteBuffer.position(internalNodeCell(byteBuffer, keyNum).position() + INTERNAL_NODE_CHILD_SIZE)
 }
 
 // bplustreeにおいて，一番右が一番大きいkey
@@ -78,4 +80,36 @@ fun initializeInternalNode(byteBuffer: ByteBuffer) {
     setNodeType(byteBuffer, TreeNodeType.NODE_INTERNAL)
     setNodeRoot(byteBuffer, false)
     internalNodeNumKeys(byteBuffer).putInt(0)
+}
+
+// recursively search the node
+fun internalNodeFind(table: Table, pageNum: Int, key: Int): Cursor {
+    val node = getPage(table.pager, pageNum)
+    val numKeys = internalNodeNumKeys(node).getInt()
+
+    // Binary search to find index of child to search
+    var minIndex = 0
+    var maxIndex = numKeys
+
+    while (minIndex != maxIndex) {
+        val index = (minIndex + maxIndex) / 2
+        val keyToRight = internalNodeKey(node, index).getInt()
+        if (keyToRight >= key) {
+            maxIndex = index
+        } else {
+            minIndex = index + 1
+        }
+    }
+
+    val childNum = internalNodeChild(node, minIndex).getInt()
+    val child = getPage(table.pager, childNum)
+    when (getNodeType(child)) {
+        TreeNodeType.NODE_INTERNAL -> {
+            return internalNodeFind(table, childNum, key)
+        }
+
+        TreeNodeType.NODE_LEAF -> {
+            return leafNodeFind(table, childNum, key)
+        }
+    }
 }

@@ -89,6 +89,9 @@ fun doMetaCommand(command: String, table: Table): MetaCommandResult {
         println("Constants:")
         printConstants()
         return MetaCommandResult.META_COMMAND_SUCCESS
+    } else if (command == ".tree") {
+        printTree(table.pager, 0)
+        return MetaCommandResult.META_COMMAND_SUCCESS
     } else {
         return MetaCommandResult.META_COMMAND_UNRECOGNIZED
     }
@@ -122,6 +125,7 @@ fun executeInsert(row: Row, table: Table): ExecuteResult {
         return ExecuteResult.EXECUTE_TABLE_FAILURE
     }
     val keyToInsert = row.id
+    // insertは，本体をinsertしないといけないので，このcursorは，leaf nodeを指していなきゃいけない
     val cursor = tableFind(table, keyToInsert)
 
     // 一番後ろにinsertする場合があるので，そのときは，cursor.cellNum==numCellsになっている
@@ -166,6 +170,31 @@ fun printConstants() {
     println("LEAF_NODE_CELL_SIZE: $LEAF_NODE_CELL_SIZE")
     println("LEAF_NODE_SPACE_FOR_CELLS: $LEAF_NODE_SPACE_FOR_CELLS")
     println("LEAF_NODE_MAX_CELLS: $LEAF_NODE_MAX_CELLS")
+}
+
+fun printTree(pager: Pager, pageNum: Int) {
+    val node = getPage(pager, pageNum)
+    when (getNodeType(node)) {
+        TreeNodeType.NODE_LEAF -> {
+            val numKeys = leafNodeNumCells(node).getInt()
+            println("- leaf (size :$numKeys)")
+            for (i in 0 until numKeys) {
+                println("  - key ${leafNodeKey(node, i).getInt()}")
+            }
+        }
+
+        TreeNodeType.NODE_INTERNAL -> {
+            val numKeys = internalNodeNumKeys(node).getInt()
+            println("- internal (size :$numKeys)")
+            for (i in 0 until numKeys) {
+                println(" - key ${internalNodeKey(node, i).getInt()}")
+                val child = internalNodeChild(node, i).getInt()
+                printTree(pager, child)
+            }
+            val child = internalNodeRightChild(node).getInt()
+            printTree(pager, child)
+        }
+    }
 }
 
 fun main() {

@@ -44,7 +44,7 @@ fun tableFind(table: Table, key: Int): Cursor {
     if (getNodeType(rootNode) == TreeNodeType.NODE_LEAF) {
         return leafNodeFind(table, rootPageNum, key)
     } else {
-        println("Need to implement searching an internal node: ${getNodeType(rootNode)}")
-        exitProcess(1)
+        return internalNodeFind(table, rootPageNum, key)
     }
 }
+

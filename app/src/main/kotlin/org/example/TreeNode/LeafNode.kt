@@ -122,7 +122,7 @@ fun leafNodeFind(table: Table, pageNum: Int, key: Int): Cursor {
 }
 
 fun leafNodeSplitAndInsert(cursor: Cursor, key: Int, value: Row) {
-    // oldNodehost，今から分割しようとしているnode
+    // oldNodeは今から分割しようとしているnode
     val oldNode = getPage(cursor.table.pager, cursor.pageNum)
     val newPageNum = getUnusedPageNum(cursor.table.pager)
     // 新しいpageを作る（=新しいnodeを作る）．これがright child nodeになる
@@ -138,22 +138,21 @@ fun leafNodeSplitAndInsert(cursor: Cursor, key: Int, value: Row) {
             destinationNode = oldNode
         }
         val indexWithinNode = i % LEAF_NODE_LEFT_SPLIT_COUNT
-        val destination = leafNodeCell(destinationNode, indexWithinNode)
 
         // まさに今挿入しようとしているものだったら
         if (i == cursor.cellNum) {
-            serializeRow(value, destination)
-        } else if (i > cursor.cellNum) {
+            serializeRow(value, leafNodeValue(destinationNode, indexWithinNode))
+            leafNodeKey(destinationNode, indexWithinNode).putInt(key)
+        } else {
             // 元々i-1の位置にあったものをdestinationにずらす
             // 0,1,2,4,5で，3を挿入しようとしたとき
             // 4,5は元々cellNumで3,4の位置にあったもの．
+            val sourceIndex = if (i > cursor.cellNum) i - 1 else i
+            // destinationNodeとoldNodeが同一インスタンスのことがあるので，
+            // 読み終わってから書き込み先のpositionを取り直す
             val tmp = ByteArray(LEAF_NODE_CELL_SIZE)
-            leafNodeCell(oldNode, i - 1).get(tmp)
-            destination.put(tmp)
-        } else {
-            val tmp = ByteArray(LEAF_NODE_CELL_SIZE)
-            leafNodeCell(oldNode, i).get(tmp)
-            destination.put(tmp)
+            leafNodeCell(oldNode, sourceIndex).get(tmp)
+            leafNodeCell(destinationNode, indexWithinNode).put(tmp)
         }
     }
 
@@ -180,6 +179,7 @@ fun createNewRoot(table: Table, rightChildPageNum: Int) {
     val leftChildPageNum = getUnusedPageNum(table.pager)
     val leftChild = getPage(table.pager, leftChildPageNum)
     val tmp = ByteArray(PAGE_SIZE)
+    root.position(0)
     root.get(tmp)
     leftChild.put(tmp)
     setNodeRoot(leftChild, false)
