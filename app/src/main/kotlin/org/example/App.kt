@@ -124,7 +124,7 @@ fun executeInsert(row: Row, table: Table): ExecuteResult {
     val keyToInsert = row.id
     val cursor = tableFind(table, keyToInsert)
 
-    // 一番後ろにくる場合があるので，そのときは，cursor.cellNum==numCellsになっている
+    // 一番後ろにinsertする場合があるので，そのときは，cursor.cellNum==numCellsになっている
     // そのとき，nodekeyとかはまだ入っていないのでこの分岐が必要
     if (cursor.cellNum < numCells) {
         val keyAtIndex = leafNodeKey(node, cursor.cellNum).getInt()

@@ -31,8 +31,10 @@ const val LEAF_NODE_VALUE_OFFSET = LEAF_NODE_KEY_OFFSET + LEAF_NODE_KEY_SIZE
 const val LEAF_NODE_CELL_SIZE = LEAF_NODE_KEY_SIZE + LEAF_NODE_VALUE_SIZE
 const val LEAF_NODE_SPACE_FOR_CELLS = PAGE_SIZE - LEAF_NODE_HEADER_SIZE
 const val LEAF_NODE_MAX_CELLS = LEAF_NODE_SPACE_FOR_CELLS / LEAF_NODE_CELL_SIZE
+const val LEAF_NODE_RIGHT_SPLIT_COUNT = (LEAF_NODE_MAX_CELLS + 1) / 2;
+const val LEAF_NODE_LEFT_SPLIT_COUNT = (LEAF_NODE_MAX_CELLS + 1) - LEAF_NODE_RIGHT_SPLIT_COUNT;
 
-// utility関数
+// utility関数（leaf node version）
 fun leafNodeNumCells(byteBuffer: ByteBuffer): ByteBuffer {
     return byteBuffer.position(LEAF_NODE_NUM_CELLS_OFFSET)
 }
@@ -52,6 +54,7 @@ fun leafNodeValue(byteBuffer: ByteBuffer, cellNum: Int): ByteBuffer {
 fun initializeLeafNode(byteBuffer: ByteBuffer) {
     // まだ1つもcellが入っていない
     setNodeType(byteBuffer, TreeNodeType.NODE_LEAF)
+    setNodeRoot(byteBuffer, false)
     leafNodeNumCells(byteBuffer).putInt(0)
 }
 
@@ -60,7 +63,7 @@ fun leafNodeInsert(cursor: Cursor, key: Int, value: Row) {
     val node = getPage(cursor.table.pager, cursor.pageNum)
     val numCells = leafNodeNumCells(node).getInt()
     if (numCells >= LEAF_NODE_MAX_CELLS) {
-        println("Need to implement splitting a leaf node")
+        leafNodeSplitAndInsert(cursor, key, value)
         return
     }
 
@@ -116,6 +119,84 @@ fun leafNodeFind(table: Table, pageNum: Int, key: Int): Cursor {
         cursor.endOfTable = true
     }
     return cursor
+}
+
+fun leafNodeSplitAndInsert(cursor: Cursor, key: Int, value: Row) {
+    // oldNodehost，今から分割しようとしているnode
+    val oldNode = getPage(cursor.table.pager, cursor.pageNum)
+    val newPageNum = getUnusedPageNum(cursor.table.pager)
+    // 新しいpageを作る（=新しいnodeを作る）．これがright child nodeになる
+    val newNode = getPage(cursor.table.pager, newPageNum)
+    initializeLeafNode(newNode)
+    var destinationNode: ByteBuffer;
+
+    // oldNode内のそれぞれの(key, value)をoldNodeとnewNodeの二つに分割する
+    for (i in LEAF_NODE_MAX_CELLS downTo 0) {
+        if (i >= LEAF_NODE_LEFT_SPLIT_COUNT) {
+            destinationNode = newNode
+        } else {
+            destinationNode = oldNode
+        }
+        val indexWithinNode = i % LEAF_NODE_LEFT_SPLIT_COUNT
+        val destination = leafNodeCell(destinationNode, indexWithinNode)
+
+        // まさに今挿入しようとしているものだったら
+        if (i == cursor.cellNum) {
+            serializeRow(value, destination)
+        } else if (i > cursor.cellNum) {
+            // 元々i-1の位置にあったものをdestinationにずらす
+            // 0,1,2,4,5で，3を挿入しようとしたとき
+            // 4,5は元々cellNumで3,4の位置にあったもの．
+            val tmp = ByteArray(LEAF_NODE_CELL_SIZE)
+            leafNodeCell(oldNode, i - 1).get(tmp)
+            destination.put(tmp)
+        } else {
+            val tmp = ByteArray(LEAF_NODE_CELL_SIZE)
+            leafNodeCell(oldNode, i).get(tmp)
+            destination.put(tmp)
+        }
+    }
+
+    leafNodeNumCells(oldNode).putInt(LEAF_NODE_LEFT_SPLIT_COUNT)
+    leafNodeNumCells(newNode).putInt(LEAF_NODE_RIGHT_SPLIT_COUNT)
+
+    // 分割した元のnodeがrootだったら，新しくrootNodeを作って，それのchildを
+    // oldNodeと上で新しく作ったnewNodeにする
+    if (isNodeRoot(oldNode)) {
+        return createNewRoot(cursor.table, newPageNum)
+    } else {
+        println("Need to implement updating parent after split")
+        exitProcess(1)
+    }
+}
+
+fun createNewRoot(table: Table, rightChildPageNum: Int) {
+    // すでに右半分は移動済み
+    val root = getPage(table.pager, table.rootPageNum) // これは今のroot node
+    val rightChild = getPage(table.pager, rightChildPageNum) // うつした先のnode
+    // 左半分を退避させる
+    // 元のrootページには，まだ下半分のデータが残っている
+    // left childを作って，そこにそっくりそのままコピーして退避する
+    val leftChildPageNum = getUnusedPageNum(table.pager)
+    val leftChild = getPage(table.pager, leftChildPageNum)
+    val tmp = ByteArray(PAGE_SIZE)
+    root.get(tmp)
+    leftChild.put(tmp)
+    setNodeRoot(leftChild, false)
+    // 中身を退避させて空き部屋になった元のrootページを
+    // 初期化して，新しいノードとして再利用する
+    initializeInternalNode(root)
+    setNodeRoot(root, true)
+    internalNodeNumKeys(root).putInt(1)
+    // キーの押し上げをして，新しいrootページにセットして，二つの子供をぶら下げる
+    val leftChildMaxKey = getNodeMaxKey(leftChild) // 新しいkey
+    internalNodeKey(root, 0).putInt(leftChildMaxKey)
+    internalNodeChild(root, 0).putInt(leftChildPageNum)
+    internalNodeRightChild(root).putInt(rightChildPageNum)
+}
+
+fun getUnusedPageNum(pager: Pager): Int {
+    return pager.numPages
 }
 
 fun getNodeType(node: ByteBuffer): TreeNodeType {

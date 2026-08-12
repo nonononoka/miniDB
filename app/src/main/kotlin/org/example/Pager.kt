@@ -27,6 +27,7 @@ fun dbOpen(filename: String): Table {
         // New database file．Initialize page 0 as leaf node.
         val rootNode = getPage(pager, 0)
         initializeLeafNode(rootNode)
+        setNodeRoot(rootNode, true)
     }
     return table
 }
