@@ -21,7 +21,9 @@ const val COMMON_NODE_HEADER_SIZE = NODE_TYPE_SIZE + IS_ROOT_SIZE + PARENT_POINT
 // Leaf Node Header Layout
 const val LEAF_NODE_NUM_CELLS_SIZE = 4
 const val LEAF_NODE_NUM_CELLS_OFFSET = COMMON_NODE_HEADER_SIZE
-const val LEAF_NODE_HEADER_SIZE = COMMON_NODE_HEADER_SIZE + LEAF_NODE_NUM_CELLS_SIZE
+const val LEAF_NODE_NEXT_LEAF_SIZE = 4
+const val LEAF_NODE_NEXT_LEAF_OFFSET = LEAF_NODE_NUM_CELLS_OFFSET + LEAF_NODE_NUM_CELLS_SIZE
+const val LEAF_NODE_HEADER_SIZE = COMMON_NODE_HEADER_SIZE + LEAF_NODE_NUM_CELLS_SIZE + LEAF_NODE_NEXT_LEAF_SIZE
 
 // Leaf Node Body Layout
 const val LEAF_NODE_KEY_SIZE = 4
@@ -37,6 +39,10 @@ const val LEAF_NODE_LEFT_SPLIT_COUNT = (LEAF_NODE_MAX_CELLS + 1) - LEAF_NODE_RIG
 // utility関数（leaf node version）
 fun leafNodeNumCells(byteBuffer: ByteBuffer): ByteBuffer {
     return byteBuffer.position(LEAF_NODE_NUM_CELLS_OFFSET)
+}
+
+fun leafNodeNextLeaf(byteBuffer: ByteBuffer): ByteBuffer {
+    return byteBuffer.position(LEAF_NODE_NEXT_LEAF_OFFSET)
 }
 
 fun leafNodeCell(byteBuffer: ByteBuffer, cellNum: Int): ByteBuffer {
@@ -56,6 +62,7 @@ fun initializeLeafNode(byteBuffer: ByteBuffer) {
     setNodeType(byteBuffer, TreeNodeType.NODE_LEAF)
     setNodeRoot(byteBuffer, false)
     leafNodeNumCells(byteBuffer).putInt(0)
+    leafNodeNextLeaf(byteBuffer).putInt(0)
 }
 
 // 実際にinsertする関数
@@ -128,6 +135,9 @@ fun leafNodeSplitAndInsert(cursor: Cursor, key: Int, value: Row) {
     // 新しいpageを作る（=新しいnodeを作る）．これがright child nodeになる
     val newNode = getPage(cursor.table.pager, newPageNum)
     initializeLeafNode(newNode)
+    // oldNode→newNode→oldNodeが元々指していたやつ，っていう順番にする
+    leafNodeNextLeaf(newNode).putInt(leafNodeNextLeaf(oldNode).getInt())
+    leafNodeNextLeaf(oldNode).putInt(newPageNum)
     var destinationNode: ByteBuffer;
 
     // oldNode内のそれぞれの(key, value)をoldNodeとnewNodeの二つに分割する
