@@ -65,6 +65,10 @@ fun initializeLeafNode(byteBuffer: ByteBuffer) {
     leafNodeNextLeaf(byteBuffer).putInt(0)
 }
 
+fun nodeParent(byteBuffer: ByteBuffer): ByteBuffer {
+    return byteBuffer.position(PARENT_POINTER_OFFSET)
+}
+
 // 実際にinsertする関数
 fun leafNodeInsert(cursor: Cursor, key: Int, value: Row) {
     val node = getPage(cursor.table.pager, cursor.pageNum)
@@ -131,10 +135,12 @@ fun leafNodeFind(table: Table, pageNum: Int, key: Int): Cursor {
 fun leafNodeSplitAndInsert(cursor: Cursor, key: Int, value: Row) {
     // oldNodeは今から分割しようとしているnode
     val oldNode = getPage(cursor.table.pager, cursor.pageNum)
+    val oldMax = getNodeMaxKey(oldNode)
     val newPageNum = getUnusedPageNum(cursor.table.pager)
     // 新しいpageを作る（=新しいnodeを作る）．これがright child nodeになる
     val newNode = getPage(cursor.table.pager, newPageNum)
     initializeLeafNode(newNode)
+    nodeParent(newNode).putInt(nodeParent(oldNode).getInt())
     // oldNode→newNode→oldNodeが元々指していたやつ，っていう順番にする
     leafNodeNextLeaf(newNode).putInt(leafNodeNextLeaf(oldNode).getInt())
     leafNodeNextLeaf(oldNode).putInt(newPageNum)
@@ -174,8 +180,12 @@ fun leafNodeSplitAndInsert(cursor: Cursor, key: Int, value: Row) {
     if (isNodeRoot(oldNode)) {
         return createNewRoot(cursor.table, newPageNum)
     } else {
-        println("Need to implement updating parent after split")
-        exitProcess(1)
+        // parentが元々のsplitされたノードの親
+        val parentPageNum = nodeParent(oldNode).getInt()
+        val newMax = getNodeMaxKey(oldNode)
+        val parentNode = getPage(cursor.table.pager, parentPageNum)
+        updateInternalNodeKey(parentNode, oldMax, newMax)
+        internalNodeInsert(cursor.table, parentPageNum, newPageNum)
     }
 }
 

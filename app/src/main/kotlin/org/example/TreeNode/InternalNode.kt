@@ -14,8 +14,10 @@ const val INTERNAL_NODE_HEADER_SIZE =
 // Internal Node Body Layout
 const val INTERNAL_NODE_KEY_SIZE = 4
 const val INTERNAL_NODE_CHILD_SIZE = 4
+
 // 1つのcellは [child(4B) | key(4B)]
 const val INTERNAL_NODE_CELL_SIZE = INTERNAL_NODE_CHILD_SIZE + INTERNAL_NODE_KEY_SIZE
+const val INTERNAL_NODE_MAX_CELLS = 3
 
 // utility関数
 fun internalNodeNumKeys(byteBuffer: ByteBuffer): ByteBuffer {
@@ -82,9 +84,7 @@ fun initializeInternalNode(byteBuffer: ByteBuffer) {
     internalNodeNumKeys(byteBuffer).putInt(0)
 }
 
-// recursively search the node
-fun internalNodeFind(table: Table, pageNum: Int, key: Int): Cursor {
-    val node = getPage(table.pager, pageNum)
+fun internalNodeFindChild(node: ByteBuffer, key: Int): Int {
     val numKeys = internalNodeNumKeys(node).getInt()
 
     // Binary search to find index of child to search
@@ -100,16 +100,65 @@ fun internalNodeFind(table: Table, pageNum: Int, key: Int): Cursor {
             minIndex = index + 1
         }
     }
+    return minIndex
+}
 
-    val childNum = internalNodeChild(node, minIndex).getInt()
-    val child = getPage(table.pager, childNum)
+// internal nodeのkeyを見て，そのchild nodeを辿っていく
+// そのchild nodeがinternal nodeだったら同じことをする
+// child nodeがleaf nodeだったら，leafを見ていく
+fun internalNodeFind(table: Table, pageNum: Int, key: Int): Cursor {
+    val node = getPage(table.pager, pageNum)
+    val childIndex = internalNodeFindChild(node, key)
+    val childPageNum = internalNodeChild(node, childIndex).getInt()
+    val child = getPage(table.pager, childPageNum)
     when (getNodeType(child)) {
         TreeNodeType.NODE_INTERNAL -> {
-            return internalNodeFind(table, childNum, key)
+            return internalNodeFind(table, childPageNum, key)
         }
 
         TreeNodeType.NODE_LEAF -> {
-            return leafNodeFind(table, childNum, key)
+            return leafNodeFind(table, childPageNum, key)
         }
+    }
+}
+
+fun updateInternalNodeKey(byteBuffer: ByteBuffer, oldKey: Int, newKey: Int) {
+    val oldChildIndex = internalNodeFindChild(byteBuffer, oldKey)
+    internalNodeKey(byteBuffer, oldChildIndex).putInt(newKey)
+}
+
+fun internalNodeInsert(table: Table, parentPageNum: Int, childPageNum: Int) {
+    // parentに，新しいchildへのポインタを足す
+    val parent = getPage(table.pager, parentPageNum)
+    val child = getPage(table.pager, childPageNum)
+    val childMaxKey = getNodeMaxKey(child)
+    val index = internalNodeFindChild(parent, childMaxKey)
+
+    val originalNumKeys = internalNodeNumKeys(parent).getInt()
+    internalNodeNumKeys(parent).putInt(originalNumKeys + 1)
+
+    // leafをsplitした結果，親ノードのinternal nodeのsplitが発生したとき
+    if (originalNumKeys >= INTERNAL_NODE_MAX_CELLS) {
+        println("Need to implement splitting internal node")
+    }
+
+    // 今のright Childとright Child Page Num
+    val rightChildPageNum = internalNodeRightChild(parent).getInt()
+    val rightChild = getPage(table.pager, rightChildPageNum)
+    // Replace right child
+    if (childMaxKey > getNodeMaxKey(rightChild)) {
+        // 今のrightChild
+        internalNodeChild(parent, originalNumKeys).putInt(rightChildPageNum)
+        internalNodeKey(parent, originalNumKeys).putInt(getNodeMaxKey(rightChild))
+        internalNodeRightChild(parent).putInt(childPageNum)
+    } else {
+        // 後ろのやつをずらす
+        for (i in originalNumKeys downTo index + 1) {
+            val tmp = ByteArray(INTERNAL_NODE_CELL_SIZE)
+            internalNodeCell(parent, i - 1).get(tmp)
+            internalNodeCell(parent, i).put(tmp)
+        }
+        internalNodeChild(parent, index).putInt(childPageNum)
+        internalNodeKey(parent, index).putInt(childMaxKey)
     }
 }
