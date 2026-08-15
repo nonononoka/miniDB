@@ -135,7 +135,7 @@ fun leafNodeFind(table: Table, pageNum: Int, key: Int): Cursor {
 fun leafNodeSplitAndInsert(cursor: Cursor, key: Int, value: Row) {
     // oldNodeは今から分割しようとしているnode
     val oldNode = getPage(cursor.table.pager, cursor.pageNum)
-    val oldMax = getNodeMaxKey(oldNode)
+    val oldMax = getNodeMaxKey(cursor.table.pager, oldNode)
     val newPageNum = getUnusedPageNum(cursor.table.pager)
     // 新しいpageを作る（=新しいnodeを作る）．これがright child nodeになる
     val newNode = getPage(cursor.table.pager, newPageNum)
@@ -182,7 +182,7 @@ fun leafNodeSplitAndInsert(cursor: Cursor, key: Int, value: Row) {
     } else {
         // parentが元々のsplitされたノードの親
         val parentPageNum = nodeParent(oldNode).getInt()
-        val newMax = getNodeMaxKey(oldNode)
+        val newMax = getNodeMaxKey(cursor.table.pager, oldNode)
         val parentNode = getPage(cursor.table.pager, parentPageNum)
         updateInternalNodeKey(parentNode, oldMax, newMax)
         internalNodeInsert(cursor.table, parentPageNum, newPageNum)
@@ -198,21 +198,44 @@ fun createNewRoot(table: Table, rightChildPageNum: Int) {
     // left childを作って，そこにそっくりそのままコピーして退避する
     val leftChildPageNum = getUnusedPageNum(table.pager)
     val leftChild = getPage(table.pager, leftChildPageNum)
+
+    // 元のrootがinternal nodeだった場合（internal nodeのsplit）は，
+    // これから使う2つの子ページをinternal nodeとして初期化しておく
+    if (getNodeType(root) == TreeNodeType.NODE_INTERNAL) {
+        initializeInternalNode(rightChild)
+        initializeInternalNode(leftChild)
+    }
+
     val tmp = ByteArray(PAGE_SIZE)
     root.position(0)
     root.get(tmp)
+    leftChild.position(0)
     leftChild.put(tmp)
     setNodeRoot(leftChild, false)
+
+    // leftChildは別のページに引っ越したので，その子供たちの親ポインタを貼り直す
+    if (getNodeType(leftChild) == TreeNodeType.NODE_INTERNAL) {
+        val numKeys = internalNodeNumKeys(leftChild).getInt()
+        for (i in 0 until numKeys) {
+            val grandChild = getPage(table.pager, internalNodeChild(leftChild, i).getInt())
+            nodeParent(grandChild).putInt(leftChildPageNum)
+        }
+        val rightGrandChild = getPage(table.pager, internalNodeRightChild(leftChild).getInt())
+        nodeParent(rightGrandChild).putInt(leftChildPageNum)
+    }
+
     // 中身を退避させて空き部屋になった元のrootページを
     // 初期化して，新しいノードとして再利用する
     initializeInternalNode(root)
     setNodeRoot(root, true)
     internalNodeNumKeys(root).putInt(1)
     // キーの押し上げをして，新しいrootページにセットして，二つの子供をぶら下げる
-    val leftChildMaxKey = getNodeMaxKey(leftChild) // 新しいkey
+    val leftChildMaxKey = getNodeMaxKey(table.pager, leftChild) // 新しいkey
     internalNodeKey(root, 0).putInt(leftChildMaxKey)
     internalNodeChild(root, 0).putInt(leftChildPageNum)
     internalNodeRightChild(root).putInt(rightChildPageNum)
+    nodeParent(leftChild).putInt(table.rootPageNum)
+    nodeParent(rightChild).putInt(table.rootPageNum)
 }
 
 fun getUnusedPageNum(pager: Pager): Int {
